@@ -11,21 +11,13 @@ local function endConnection(client)
   client._con.close();
   client._con = nil;
   client._connected = false;
-  
-  --Cancel Timer [OpenComputers]
-  if client._timer then
-	layer.stopTimer(client._timer);
-    client._timer = nil
-  end
 end
 
 --Create a new client
 -- evF = callback function for events
-function Wsclient.create(evF, autoUpdate)
+function Wsclient.create(evF)
   local cl  = {};
-  setmetatable(cl,Wsclient);
-  
-  cl._autoUpdate = autoUpdate;
+  setmetatable(cl, Wsclient);
   
   if evF~=nil then
     cl._callback = evF;
@@ -36,15 +28,8 @@ function Wsclient.create(evF, autoUpdate)
   return cl;
 end
 
---connect to given url
---Example URL: "ws://example.com/any/path"
-function Wsclient:connectURL(url)
-    host,port,path,tls = tools.parseUrl(url);
-    self:connect(host, tonumber(port), path, tls);
-end
-
 --connect to server
-function Wsclient:connect(host,port,path,tls)
+function Wsclient:connect(host,port,path)
   if self:hasConnection() then
     error("Already Connected!");
   end
@@ -52,21 +37,14 @@ function Wsclient:connect(host,port,path,tls)
   self._host = host;
   self._port = port or 80;
   self._path = path or "/";
-  self._tls = tls or false;
 
-  self._con = layer.open(self._host, self._port, self._tls);
+  self._con = layer.open(self._host, self._port);
   if not self._con then
     error("Unknown error while connecting. Connection = nil");
   end
   
   upgrade_req, self._key = tools.upgrade(self._host, self._path, self._port);
   self._con.write(upgrade_req);
-  
-  --Start Timer [OpenComputers]
-  if self._autoUpdate == nil or self._autoUpdate then
-    self._timer = layer.startTimer(function() self:update() end, 0.1)
-  end
-  
 end
 
 --check network input
