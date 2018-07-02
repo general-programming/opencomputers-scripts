@@ -8,10 +8,13 @@ import uuid
 import subprocess
 import time
 import json
+import logging
 
 import functools
 from concurrent.futures import ThreadPoolExecutor
 import aiohttp.web
+
+logging.basicConfig(level=logging.DEBUG)
 
 HOST = os.getenv('HOST', '0.0.0.0')
 PORT = int(os.getenv('PORT', 5000))
