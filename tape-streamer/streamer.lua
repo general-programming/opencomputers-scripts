@@ -7,7 +7,13 @@ if not component.isAvailable("tape_drive") then
     io.stderr:write("This program requires a tape drive to run.")
     return
 end
-local tape = component.tape_drive
+
+local tape_drives = component.list("tape_drive")
+local tape_drive_ids = {}
+for k, v in pairs(tape_drives) do
+    table.insert(tape_drive_ids, k)
+end
+
 
 if not component.isAvailable("internet") then
     io.stderr:write("This program requires an internet card to run.")
@@ -16,143 +22,77 @@ end
 local internet = require("internet")
 
 local ws = require("websocket_client");
+local json = require("json");
+
+-- Global --
+local send_info = false
+local do_ack = false
+local socket_host = "982ddf77.ngrok.io"
+
+local do_play = false;
+local load_chunk = false;
+local tape_address = "";
+local last_tape_address = "";
+local last_tape_change = 0;
 
 -- Sanity checks --
 
-if not tape.isReady() then
-    io.stderr:write("The tape drive does not contain a tape.")
-    return
+for k, _ in pairs(tape_drives) do
+    local tape = component.proxy(k)
+    if not tape.isReady() then
+        io.stderr:write("A tape drive is missing a tape.")
+        return
+    end
 end
 
 -- Utility --
 
-local function rewind()
-    tape.seek(-tape.getSize())
-end
-
-local function stop()
-    tape.stop()
-end
-
-local function play()
-    tape.play()
-end
-
 local function clean_state(reset_meta)
-    stop()
-    rewind()
-    if reset_meta then
-        tape.setSpeed(1)
-        tape.setVolume(1)
+    for k, _ in pairs(tape_drives) do
+        shell.execute("tape --address=" .. k .. " stop")
+        shell.execute("tape --address=" .. k .. " rewind")
+        if reset_meta then
+            local tape = component.proxy(k)
+            tape.setSpeed(1)
+            tape.setVolume(1)
+        end
     end
 end
 
-local function writeTape(path)
-    local file, msg, _, y
-    local block = 2048
-
-    tape.stop()
-    tape.seek(-tape.getSize())
-    tape.stop() --Just making sure
-  
-    local bytery = 0
-    local filesize = tape.getSize()
-
-    local function setupConnection(url)
-        local file, reason = internet.request(url)
-        
-        if not file then
-            io.stderr:write("error requesting data from URL: " .. reason .. "\n")
-            return false
-        end
-        
-        local connected, reason = false, ""
-        local timeout = 50
-        
-        for i = 1, timeout do
-            connected, reason = file.finishConnect()
-            os.sleep(.1)
-            if connected or connected == nil then
-                break
-            end
-        end
-        
-        if connected == nil then
-            io.stderr:write("Could not connect to server: " .. reason)
-            return false
-        end
-        
-        local status, message, header = file.response()
-
-        if header and header["Content-Length"] and header["Content-Length"][1] then
-            filesize = tonumber(header["Content-Length"][1])
-        end
-
-        if filesize > tape.getSize() then
-            io.stderr:write("Warning: File is too large for tape, shortening file\n")
-            filesize = tape.getSize()
-          end
-
-        if status then
-            status = string.format("%d", status)
-            if status:sub(1,1) == "2" then
-                return true, {
-                    close = function(self, ...) return file.close(...) end,
-                    read = function(self, ...) return file.read(...) end,
-                }, header
-            end
-            return false
-        end
-        io.stderr:write("no valid HTTP response - no response")
-        return false
-    end
-    
-    local success, header
-    success, file, header = setupConnection(path)
-    if not success then
-        if file then
-            file:close()
-        end
-        return
-    end
-    
-    repeat
-        local bytes = file:read(block)
-        if not tape.isReady() then
-            io.stderr:write("\nError: Tape was removed during writing.\n")
-            file:close()
-            return
-          end
-        io.stderr:write(".")
-        if bytes and #bytes > 0 then
-            bytery = bytery + #bytes
-            tape.write(bytes)
-        end
-    until not bytes or bytery > filesize
-    file:close()
-    print("\nFile closed.")
+local function tick_epoch()
+    return os.time() * (1000/60/60)
 end
 
 -- Main logic --
 
-local function get_payload(payload_i)
-    clean_state(false)
-    clean_state(false)
+local function get_payload(payload_i, payload_address)
     print("Write payload before")
-    writeTape("http://96d60990.ngrok.io/chunk/" .. payload_i)
+    shell.execute("time wget -f http://" .. socket_host .. "/chunk/" .. payload_i .. " nextchunk")
+    -- shell.execute("tape write --b=8192 -y http://" .. socket_host .. "/chunk/" .. payload_i)
     print("Write payload after")
-    cl:send("ack")
-    play()
+    if last_tape_address == "" then
+        last_tape_address = payload_address
+        tape_address = payload_address
+    end
+
+    last_tape_address = tape_address
+    tape_address = payload_address
+    do_play = true
 end
 
 local on_ws_event = function(event, payload)
     print("Got a " .. event .. " payload of length " .. string.len(payload))
-    
+
+    payload = json.decode(payload)
+
     if event:lower() == "text" then
-        if payload == "ping" then
-            print("Got ping payload.")
-        elseif string.find(payload, "get:") then
-            get_payload(string.sub(payload, 5))
+        if payload["cmd"] == "ping" then
+            print("Got ping.")
+        elseif payload["cmd"] == "getinfo" then
+            print("Got info request.")
+            send_info = true
+        elseif payload["cmd"] == "getchunk" then
+            get_payload(payload["chunk_i"], payload["address"])
         end
     else
         print(event .. "->" .. payload)
@@ -162,33 +102,81 @@ end
 
 local function make_socket()
     local cl = ws.create(on_ws_event, false);
-    cl:connect("96d60990.ngrok.io", 80, "/", false);
+    cl:connect(socket_host, 80, "/", false);
     return cl
 end
-
-local function do_ping()
-    cl:send("ping")
-end
-
--- __init__ --
-local args = { ... }
 
 -- Clean the tape drive state before starting up
 clean_state(true)
 
 -- Main socket loop
 local cl = make_socket()
-local ping_timer = event.timer(1, function()
-    cl:send("ping")
+
+local ping_timer = event.timer(0.50, function()
+    if do_play then
+        shell.execute("tape --address=" .. tape_address .. " write --b=8192 -y nextchunk")
+        do_play = false
+        load_chunk = true
+    end
+
+    if send_info then
+        cl:send(json.encode({
+            cmd = "drives",
+            drives = tape_drive_ids
+        }))
+        send_info = false
+    end
+
+    cl:send(json.encode({
+        cmd = "ping"
+    }))
     cl:update()
+end, math.huge)
+
+local chunk_timer = event.timer(0.15, function()
+    if not load_chunk then
+        return
+    end
+
+    -- arbitary magic tick number
+    print((tick_epoch() - (last_tape_change + 98)))
+    if not (tick_epoch() > (last_tape_change + 98)) then
+        return
+    end
+
+    -- Take over first to prevent race conditions.
+    load_chunk = false
+    last_tape_change = tick_epoch()
+
+    -- Play the new tape and stop it after .75 seconds to compensate for tape delay.
+    shell.execute("tape --address=" .. tape_address .. " volume 1")
+    shell.execute("tape --address=" .. tape_address .. " play")
+    if not (tape_address == last_tape_address) then
+        event.timer(1.25, function()
+            shell.execute("tape --address=" .. last_tape_address .. " volume 0")
+            shell.execute("tape --address=" .. last_tape_address .. " stop")
+        end, 1)
+    end
+
+    -- Send ACK to say we are ready for another chunk.
+    cl:send(json.encode({
+        cmd = "ack"
+    }))
 end, math.huge)
 
 while true do
     local ev = {event.pull()}
+    print(ev[1])
 
     if ev[1] == "interrupted" then
-        cl:disconnect()
-        event.cancel(ping_timer)
-        return;
+        break;
     end
+end
+
+-- Cleanup
+event.cancel(ping_timer)
+event.cancel(chunk_timer)
+cl:disconnect()
+for k, _ in pairs(tape_drives) do
+    shell.execute("tape --address=" .. k .. " stop")
 end
