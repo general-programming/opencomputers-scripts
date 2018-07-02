@@ -38,7 +38,7 @@ def _chunk_file(filename, time_from, time_to):
         return process.stdout
 
 async def websocket_handler(request):
-    ws = aiohttp.web.WebSocketResponse()    
+    ws = aiohttp.web.WebSocketResponse(heartbeat=2)    
     print('Opening a socket.')
 
     await ws.prepare(request)
