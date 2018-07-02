@@ -1,5 +1,6 @@
 -- Imports --
 
+local args, options = shell.parse(...)
 local component = require("component")
 local event = require("event")
 
@@ -34,6 +35,10 @@ local load_chunk = false;
 local tape_address = "";
 local last_tape_address = "";
 local last_tape_change = 0;
+local set_index = -1
+if options.index then
+    local set_index = tonumber(options.index)
+end
 
 -- Sanity checks --
 
@@ -53,7 +58,7 @@ local function clean_state(reset_meta)
         shell.execute("tape --address=" .. k .. " rewind")
         if reset_meta then
             local tape = component.proxy(k)
-            tape.setSpeed(1)
+            tape.setSpeed(2)
             tape.setVolume(1)
         end
     end
@@ -115,8 +120,21 @@ local cl = make_socket()
 local ping_timer = event.timer(0.50, function()
     if do_play then
         shell.execute("tape --address=" .. tape_address .. " write --b=8192 -y nextchunk")
+        -- No audio data size is 128 from observations.
+        if filesystem.size("/nextchunk") == 128 then
+            set_index = 0
+        end
         do_play = false
         load_chunk = true
+    end
+
+    if not set_index == -1 then
+        local index = tonumber(set_index)
+        cl:send(json.encode({
+            cmd = "setindex",
+            i = index
+        }))
+        set_index = -1
     end
 
     if send_info then
@@ -130,6 +148,7 @@ local ping_timer = event.timer(0.50, function()
     cl:send(json.encode({
         cmd = "ping"
     }))
+
     cl:update()
 end, math.huge)
 

@@ -22,7 +22,7 @@ loop = asyncio.get_event_loop()
 
 def _chunk_file(filename, time_from, time_to):
     print(time_from, time_to)
-    os.system("ffmpeg -y -i {filename} -ss {time_from} -to {time_to} -acodec pcm_s8 -f s8 -ac 1 -ar 48000 tmp.pcm".format(
+    os.system("ffmpeg -y -i {filename} -ss {time_from} -to {time_to} -acodec pcm_s8 -f s8 -ac 1 -ar 96000 tmp.pcm".format(
         filename=filename,
         time_from=time_from,
         time_to=time_to
@@ -50,7 +50,7 @@ async def websocket_handler(request):
     drives = []
 
     async for msg in ws:
-        print(msg)
+        print(f"{msg.data}; i: {i}; tape_i: {tape_index}; acked: {acked}; {len(drives)} drives")
         
         if msg.type != aiohttp.WSMsgType.TEXT:
             continue
@@ -61,6 +61,8 @@ async def websocket_handler(request):
             await ws.close()
         elif data["cmd"] == "ack":
             acked = True
+        elif data["cmd"] == "setindex":
+            i = data["i"]
         elif data["cmd"] == "ping":
             if not drives:
                 await ws.send_str(json.dumps({
