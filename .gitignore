@@ -103,3 +103,10 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Project specific
+tape-streamer/**/*.ogg
+tape-streamer/**/*.wav
+tape-streamer/**/*.mp3
+tape-streamer/**/*.opus
+tmp.pcm
