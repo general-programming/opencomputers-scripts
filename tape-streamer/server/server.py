@@ -71,6 +71,8 @@ async def websocket_handler(request):
             if not acked:
                 continue
 
+            acked = False
+
             await ws.send_str(json.dumps({
                 "cmd": "getchunk",
                 "chunk_i": i,
@@ -80,7 +82,6 @@ async def websocket_handler(request):
             tape_index += 1
             if tape_index >= len(drives):
                 tape_index = 0
-            acked = False
         elif data["cmd"] == "drives":
             drives = data["drives"]
 
