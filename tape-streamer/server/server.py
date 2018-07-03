@@ -2,7 +2,6 @@ import asyncio
 import aiofiles
 import os
 import random
-import base64
 import itertools
 import uuid
 import subprocess
@@ -19,6 +18,9 @@ logging.basicConfig(level=logging.DEBUG)
 HOST = os.getenv('HOST', '0.0.0.0')
 PORT = int(os.getenv('PORT', 5000))
 CHUNK_TIME = 5
+global_state = {
+    "songpath": "audio/default.opus"
+}
 
 thread_pool = ThreadPoolExecutor(max_workers=4)
 loop = asyncio.get_event_loop()
@@ -98,7 +100,7 @@ async def chunk_handler(request):
 
     chunk = await loop.run_in_executor(
         thread_pool,
-        functools.partial(_chunk_file, "doki.wav", CHUNK_TIME * chunk_i, CHUNK_TIME * (chunk_i + 1))
+        functools.partial(_chunk_file, global_state["songpath"], CHUNK_TIME * chunk_i, CHUNK_TIME * (chunk_i + 1))
     )
 
     print(f"Sending chunk i {len(chunk)}")
