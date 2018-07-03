@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 import aiohttp.web
 
 logging.basicConfig(level=logging.DEBUG)
+logging.getLogger("asyncio").setLevel(logging.DEBUG)
 
 HOST = os.getenv('HOST', '0.0.0.0')
 PORT = int(os.getenv('PORT', 5000))
@@ -42,58 +43,82 @@ def _chunk_file(filename, time_from, time_to):
         )
         return process.stdout
 
-async def websocket_handler(request):
-    ws = aiohttp.web.WebSocketResponse(heartbeat=2)    
-    print('Opening a socket.')
+class WSView(aiohttp.web.View):
+    def __init__(self, *args, **kwargs):
+        self.drives = []
+        self.drive_index = 0
 
-    await ws.prepare(request)
-    print('Websocket connection ready')
+        self.got_ack = False
+        self.chunk_index = 0
 
-    i = 0
-    tape_index = 0
-    acked = True
-    drives = []
+        self.ws = None
 
-    async for msg in ws:
-        print(f"{msg.data}; i: {i}; tape_i: {tape_index}; acked: {acked}; {len(drives)} drives")
-        
-        if msg.type != aiohttp.WSMsgType.TEXT:
-            continue
+        super().__init__(*args, **kwargs)
 
-        data = json.loads(msg.data)
+    @property
+    def latest_drive(self):
+        if not self.drives:
+            return None
+
+        drive_id = self.drives[self.drive_index]
+        self.drive_index += 1
+        if self.drive_index >= len(self.drives):
+            self.drive_index = 0
+
+        return drive_id
+
+    async def send(self, data):
+        await self.ws.send_str(json.dumps(data))
+
+    async def get(self):
+        ws = aiohttp.web.WebSocketResponse(heartbeat=2)    
+        print('Opening a socket.')
+
+        await ws.prepare(self.request)
+        print('Websocket connection ready')
+
+        self.got_ack = True
+        self.ws = ws
+
+        async for message in self.ws:
+            if message.type != aiohttp.WSMsgType.TEXT:
+                continue
+
+            print(f"{message.data}; chunk: {self.chunk_index}; drive: {self.drive_index}; ack: {self.got_ack}; {len(self.drives)} drives")
+            await self.handle_message(message)
+
+        print('Websocket connection closed')
+        return self.ws
+
+    async def handle_message(self, message):
+        data = json.loads(message.data)
 
         if data["cmd"] == 'close':
-            await ws.close()
+            await self.ws.close()
         elif data["cmd"] == "ack":
-            acked = True
+            self.got_ack = True
         elif data["cmd"] == "setindex":
-            i = data["i"]
+            self.chunk_index = data["i"]
         elif data["cmd"] == "ping":
-            if not drives:
-                await ws.send_str(json.dumps({
+            if not self.drives:
+                await self.send({
                     "cmd": "getinfo"
-                }))
-                continue
+                })
+                return
 
-            if not acked:
-                continue
+            if not self.got_ack:
+                return
 
-            acked = False
+            self.got_ack = False
 
-            await ws.send_str(json.dumps({
+            await self.send({
                 "cmd": "getchunk",
-                "chunk_i": i,
-                "address": drives[tape_index]
-            }))
-            i += 1
-            tape_index += 1
-            if tape_index >= len(drives):
-                tape_index = 0
+                "chunk_i": self.chunk_index,
+                "address": self.latest_drive
+            })
+            self.chunk_index += 1
         elif data["cmd"] == "drives":
-            drives = data["drives"]
-
-    print('Websocket connection closed')
-    return ws
+            self.drives = data["drives"]
 
 async def chunk_handler(request):
     chunk_i = int(request.match_info['chunk_i'])
@@ -109,7 +134,7 @@ async def chunk_handler(request):
 
 def main():
     app = aiohttp.web.Application(loop=loop)
-    app.router.add_get('/', websocket_handler)
+    app.router.add_view('/', WSView)
     app.router.add_get('/chunk/{chunk_i}', chunk_handler)
     aiohttp.web.run_app(app, host=HOST, port=PORT)
 
