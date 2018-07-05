@@ -22,7 +22,26 @@ PORT = int(os.getenv('PORT', 5000))
 
 loop = asyncio.get_event_loop()
 
-class WSView(aiohttp.web.View):
+class RedisView(aiohttp.web.View):
+    def __init__(self, *args, **kwargs):
+        self.redis = None
+        super().__init__(*args, **kwargs)
+
+    async def create_redis(self):
+        self.redis = await aioredis.create_redis_pool(
+            'redis://localhost',
+            minsize=1,
+            maxsize=4,
+            loop=loop
+        )
+
+    async def cleanup_redis(self):
+        if self.redis:
+            self.redis.close()
+            await self.redis.wait_closed()
+            print('Redis closed')
+
+class WSView(RedisView):
     def __init__(self, *args, **kwargs):
         self.drives = []
         self.drive_index = 0
@@ -31,7 +50,6 @@ class WSView(aiohttp.web.View):
         self.chunker = Chunker(server=True)
 
         self.ws = None
-        self.redis = None
 
         super().__init__(*args, **kwargs)
 
@@ -59,12 +77,7 @@ class WSView(aiohttp.web.View):
 
         self.got_ack = True
         self.ws = ws
-        self.redis = await aioredis.create_redis_pool(
-            'redis://localhost',
-            minsize=1,
-            maxsize=4,
-            loop=loop
-        )
+        await self.create_redis()
 
         async for message in self.ws:
             if message.type != aiohttp.WSMsgType.TEXT:
@@ -75,10 +88,7 @@ class WSView(aiohttp.web.View):
 
         print('Websocket connection closed')
 
-        if self.redis:
-            self.redis.close()
-            await self.redis.wait_closed()
-            print('Redis closed')
+        await self.cleanup_redis()
 
         return self.ws
 
@@ -112,19 +122,9 @@ class WSView(aiohttp.web.View):
         elif data["cmd"] == "drives":
             self.drives = data["drives"]
 
-class SongsView(aiohttp.web.View):
-    def __init__(self, *args, **kwargs):
-        self.redis = None
-
-        super().__init__(*args, **kwargs)
-
+class SongsView(RedisView):
     async def get(self):
-        self.redis = await aioredis.create_redis_pool(
-            'redis://localhost',
-            minsize=1,
-            maxsize=4,
-            loop=loop
-        )
+        await self.create_redis()
 
         optimized_list = {}
 
@@ -134,10 +134,7 @@ class SongsView(aiohttp.web.View):
             optimized_list[song["name"]] = song
             del optimized_list[song["name"]]["name"]
 
-        if self.redis:
-            self.redis.close()
-            await self.redis.wait_closed()
-            print('Redis closed')
+        await self.cleanup_redis()
 
         return aiohttp.web.json_response(optimized_list)
 
