@@ -112,16 +112,39 @@ class WSView(aiohttp.web.View):
         elif data["cmd"] == "drives":
             self.drives = data["drives"]
 
-async def chunk_handler(request):
-    chunk_i = int(request.match_info['chunk_i'])
+class SongsView(aiohttp.web.View):
+    def __init__(self, *args, **kwargs):
+        self.redis = None
 
-    print(f"Sending chunk i {len(chunk)}")
+        super().__init__(*args, **kwargs)
 
-    return aiohttp.web.Response(body=chunk)
+    async def get(self):
+        self.redis = await aioredis.create_redis_pool(
+            'redis://localhost',
+            minsize=1,
+            maxsize=4,
+            loop=loop
+        )
+
+        optimized_list = {}
+
+        songs = await self.redis.smembers("streamer:songs")
+        for song in songs:
+            song = json.loads(song)
+            optimized_list[song["name"]] = song
+            del optimized_list[song["name"]]["name"]
+
+        if self.redis:
+            self.redis.close()
+            await self.redis.wait_closed()
+            print('Redis closed')
+
+        return aiohttp.web.json_response(optimized_list)
 
 def main():
     app = aiohttp.web.Application(loop=loop)
     app.router.add_view('/', WSView)
+    app.router.add_view('/songs', SongsView)
     app.router.add_static('/chunk/', "audio/")
     aiohttp.web.run_app(app, host=HOST, port=PORT)
 
