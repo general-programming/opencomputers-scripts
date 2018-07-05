@@ -183,6 +183,7 @@ while true do
         local ok, update_status = pcall(cl.update, cl)
         if not ok then
             io.stderr:write(update_status .. "\n")
+            do_restart = true
             break;
         end
     elseif not cl:isConnected() then
