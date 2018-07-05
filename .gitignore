@@ -104,9 +104,13 @@ venv.bak/
 # mypy
 .mypy_cache/
 
+# macOS
+.DS_Store
+
+# Redis
+dump.rdb
+
 # Project specific
-tape-streamer/**/*.ogg
-tape-streamer/**/*.wav
-tape-streamer/**/*.mp3
-tape-streamer/**/*.opus
+tape-streamer/server/audio/*
+tape-streamer/server/unprocessed/*
 tmp.pcm

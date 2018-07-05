@@ -42,8 +42,8 @@ local load_chunk = false;
 local tape_address = "";
 local last_tape_address = "";
 local last_tape_change = 0;
-local last_index = -1;
-local set_index = options.index or ""
+local last_chunk = "";
+local set_chunk = options.chunk or ""
 
 do_restart = false
 
@@ -66,14 +66,20 @@ local function tick_epoch()
     return os.time() * (1000/60/60)
 end
 
+local function debug_print(line)
+    if options.debug then
+        print(line)
+    end
+end
+
 -- Main logic --
 
-local function get_payload(payload_i, payload_address)
-    print("Write payload before")
-    last_index = payload_i
-    shell.execute("time wget -f http://" .. socket_host .. ":5000/chunk/" .. payload_i .. " /nextchunk")
-    -- shell.execute("tape write --b=8192 -y http://" .. socket_host .. "/chunk/" .. payload_i)
-    print("Write payload after")
+local function get_payload(chunk_id, payload_address)
+    debug_print("Write payload before")
+    last_chunk = chunk_id
+    shell.execute("time wget -f http://" .. socket_host .. ":5000/chunk/" .. chunk_id .. " /nextchunk")
+    debug_print("Write payload after")
+
     if last_tape_address == "" then
         last_tape_address = payload_address
         tape_address = payload_address
@@ -96,7 +102,7 @@ local on_ws_event = function(ws_event, payload)
             print("Got info request.")
             event.push("sendinfo")
         elseif payload["cmd"] == "getchunk" then
-            get_payload(payload["chunk_i"], payload["address"])
+            get_payload(payload["chunk_id"], payload["address"])
         end
     else
         print(ws_event .. "->" .. payload)
@@ -111,11 +117,6 @@ local cl = ws.create(on_ws_event);
 cl:connect(socket_host, 5000, "/");
 
 local ping_timer = event.timer(1, function()
-    local ok, update_status = pcall(cl.update, cl)
-    if not ok then
-        io.stderr:write(update_status .. "\n")
-    end
-
     -- Restart the program if we haven't outputted audio for a while.
     if last_tape_change ~= 0 and (tick_epoch() > (last_tape_change + 140)) then
         io.stderr:write((tick_epoch() - last_tape_change) .. "\n")
@@ -123,20 +124,20 @@ local ping_timer = event.timer(1, function()
         event.push("restart")
     end
 
-    if set_index ~= "" then
+    if set_chunk ~= "" then
         cl:send(json.encode({
-            cmd = "setindex",
-            i = set_index
+            cmd = "setchunk",
+            i = set_chunk
         }))
-        set_index = ""
+        set_chunk = ""
     end
 
     if do_play then
-        print("Write #" .. last_index)
+        print("Write #" .. last_chunk)
         shell.execute("tape -y --b=8192 --address=" .. tape_address .. " write /nextchunk")
         -- No audio data size is 128 from observations.
         if filesystem.size("/nextchunk") == 128 then
-            set_index = 0
+            set_chunk = ""
         end
         do_play = false
         load_chunk = true
@@ -162,7 +163,8 @@ local chunk_timer = event.timer(0.15, function()
     last_tape_change = tick_epoch()
 
     -- Play the new tape and stop it after .75 seconds to compensate for tape delay.
-    print("Changing #" .. last_index)
+    print("Changing #" .. last_chunk)
+    event.push("ack")
     shell.execute("tape --address=" .. tape_address .. " volume 1")
     shell.execute("tape --address=" .. tape_address .. " play")
     if not (tape_address == last_tape_address) then
@@ -171,7 +173,6 @@ local chunk_timer = event.timer(0.15, function()
             shell.execute("tape --address=" .. last_tape_address .. " stop")
         end, 1)
     end
-    event.push("ack")
 end, math.huge)
 
 while true do
@@ -179,7 +180,11 @@ while true do
 
     -- Socket push events
     if ev[1] == "updatesocket" then
-        cl:update();
+        local ok, update_status = pcall(cl.update, cl)
+        if not ok then
+            io.stderr:write(update_status .. "\n")
+            break;
+        end
     elseif not cl:isConnected() then
         io.stderr:write(ev[1] .. ": Socket not connected! Things might not send!\n")
     elseif ev[1] == "sendinfo" then
@@ -196,7 +201,7 @@ while true do
             cmd = "ping"
         }))
     else
-        print(ev[1])
+        debug_print(ev[1])
     end
 
     -- Control events
@@ -218,5 +223,11 @@ end
 
 -- Restart if applicable
 if do_restart then
-    shell.execute("streamer --index=" .. last_index)
+    extra_args = ""
+
+    if options.debug then
+        extra_args = extra_args .. " --debug"
+    end
+
+    shell.execute("streamer --chunk=" .. last_chunk .. extra_args)
 end
