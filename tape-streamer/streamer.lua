@@ -230,5 +230,8 @@ if do_restart then
         extra_args = extra_args .. " --debug"
     end
 
+    print("Restarting with CLI " .. "streamer --chunk=" .. last_chunk .. extra_args)
+    os.sleep(1)
+
     shell.execute("streamer --chunk=" .. last_chunk .. extra_args)
 end
