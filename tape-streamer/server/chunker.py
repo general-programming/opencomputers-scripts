@@ -34,7 +34,7 @@ class Chunker(object):
             print(f"too many splits? {chunk_id}")
             return
 
-        all_songs = [json.loads(x) for x in r.smembers("streamer:songs")]
+        all_songs = [json.loads(x) for x in self.redis.smembers("streamer:songs")]
 
         self.current_song = chunk_splits[0]
         self.current_chunk_index = int(chunk_splits[1])
@@ -47,5 +47,5 @@ class Chunker(object):
 
     def next_chunk(self):
         self.current_chunk_index += 1
-        if self.current_chunk_index > self.chunk_count:
+        if self.current_chunk_index >= self.chunk_count:
             self.current_chunk_index = 0
