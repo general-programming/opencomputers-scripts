@@ -133,7 +133,7 @@ local ping_timer = event.timer(1, function()
     end
 
     if do_play then
-        print("Write #" .. last_chunk)
+        print("Write: " .. last_chunk)
         shell.execute("tape -y --b=8192 --address=" .. tape_address .. " write /nextchunk")
         -- No audio data size is 128 from observations.
         if filesystem.size("/nextchunk") == 128 then
@@ -163,7 +163,7 @@ local chunk_timer = event.timer(0.15, function()
     last_tape_change = tick_epoch()
 
     -- Play the new tape and stop it after .75 seconds to compensate for tape delay.
-    print("Changing #" .. last_chunk)
+    print("Changing: " .. last_chunk)
     event.push("ack")
     shell.execute("tape --address=" .. tape_address .. " volume 1")
     shell.execute("tape --address=" .. tape_address .. " play")
