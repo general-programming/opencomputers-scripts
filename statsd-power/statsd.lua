@@ -4,6 +4,18 @@ local event = require("event")
 
 local computerid = component.computer.address
 
+-- Utility
+
+local function safe_call(fn)
+    local ok, status = pcall(fn)
+    if not ok then
+        io.stderr:write(status .. "\n")
+    end
+end
+
+
+-- statsd
+
 local function gauge(name, value) 
     local handle, handle_err = internet.open("192.168.11.1", 8125)
 
@@ -16,11 +28,9 @@ local function gauge(name, value)
     handle:close()
 end
 
-local push_timer = event.timer(1, function()
-    event.push("push")
-end, math.huge)
+-- Component pushers
 
-local function push()
+local function push_rf()
     -- Draconic cap data
     if component.isAvailable("draconic_rf_storage") then
         for cell_address, _ in pairs(component.list("draconic_rf_storage")) do
@@ -34,12 +44,14 @@ local function push()
     end
 end
 
+-- Main
+
 local function main()
     while true do
         local ev = {event.pull()}
 
-        if ev[1] == "push" then
-            push()
+        if ev[1] == "push_rf" then
+            safe_call(push_rf)
         end
         -- Control events
         if ev[1] == "interrupted" then
@@ -48,5 +60,9 @@ local function main()
     end
 end
 
+local rf_push_timer = event.timer(1, function()
+    event.push("push_rf")
+end, math.huge)
+
 main()
-event.cancel(push_timer)
+event.cancel(rf_push_timer)
